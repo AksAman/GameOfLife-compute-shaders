@@ -1,0 +1,81 @@
+﻿#pragma kernel GOL
+
+// Read write enabled texture for transfering calculated results from GPU to CPU
+RWTexture2D<float4> Result;
+
+// Input texture to carry calculations on
+sampler2D Input;
+
+// Width and height of the current image (Set from cpu side code)
+float Width;
+float Height;
+
+// Color for alive cells (Set from cpu side code) (r component should be 1)
+float4 aliveColor;
+
+
+[numthreads(8,8,1)]
+void GOL (uint3 id : SV_DispatchThreadID)
+{
+	// actual pixel position
+	float2 position = float2((id.x) / Width, (id.y) / Height);
+
+	// each pixel size (used to calculate neighbor pixels)
+	float2 pixelSize = float2(1.0 / Width, 1.0 / Height);
+
+	// Setting dead cells color (r component should be 0)
+	float4 deadColor = float4(0, 0.1, 0.2, 1);
+	
+
+	// calculate pixel value of currentPixel (just the r component)
+	// tex2Dlod : 2D texture lookup with specified level of detail and optional texel offset. (src : https://developer.download.nvidia.com/cg/tex2Dlod.html)
+	float currentPixel = tex2Dlod(Input, float4(position.x, position.y, 0, 0)).r;
+
+	// Calculation of total value of neighbouring pixels
+	// [p(-1,-1) p(0,-1) p(1,-1)]
+	// [p(-1, 0) p(0, 0) p(1, 0)]
+	// [p(-1, 1) p(0, 0) p(1 ,1)]
+	float neighborPixels = 0;
+	for (int i = -1; i<=1; i++)
+	{
+		for (int j=-1; j<=1; j++)
+		{
+			// skip the center pixel (which is currentPixel)
+			if(i==0 && j==0)
+				continue;
+			else
+				neighborPixels += tex2Dlod(Input, float4(position.x + i* pixelSize.x, position.y +  j*pixelSize.y, 0, 0)).r;
+		}
+	}
+
+	// Rules evaluation
+	// if a cell is alive : 
+	//		Death due to overpopulation => if there are more than 3 surrounding living cells
+	//		Death due to underpopulation => if there are less than 2 surrounding living cells
+	//		Lives to next generation => if there are 2 to 3 surrounding living cells
+	// else if a cell is dead :
+	//		Rebirth => if there are exact 3 surrounding living cells
+	//		else => stays dead
+	
+	// while evaluating these rules, ranges have been taken as cells won't have values in whole numbers (position is floating number)
+	if (currentPixel > 0.5) { // cell is alive
+		if (neighborPixels > 1.5 && neighborPixels < 3.5) 
+		{
+			Result[id.xy] = aliveColor; // Lives to next generation
+		}
+		else {
+			Result[id.xy] = deadColor; // Death due to Under or Over-population
+		}
+	}
+	else { // cell is dead
+		if (neighborPixels > 2.5 && neighborPixels < 3.5) 
+		{
+			Result[id.xy] = aliveColor; // Rebirth
+		}
+		else {
+			Result[id.xy] = deadColor; // stays dead
+		}
+	}
+
+
+}
